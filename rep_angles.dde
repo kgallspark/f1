@@ -1,0 +1,299 @@
+var gripVals = mapGrip(1500)
+
+function writeStatusFile(state, torque) {
+  const status = {
+    state: state,
+    torque: torque
+  };
+
+  const json = JSON.stringify(status, null, 2); // Pretty-print JSON with 2-space indentation
+  write_file("/srv/samba/share/udp_status_return.txt", JSON.stringify(status, null, 2))
+
+}
+
+// Example usage:
+const clearJointMailbox = {
+  "seq": 0,
+  "ts":  0,
+  "angles": {
+    "4": 0,
+    "5": 0,
+    "2": 0,
+    "3": 0,
+    "8": 1750,
+    "6": 0,
+    "1": 0
+  }
+}
+
+var robotTorque = {
+  "1": 0.1,
+  "2": 0.05,
+  "3": 0.0,
+  "4": 0.02,
+  "5": 0.01,
+  "6": 0.03,
+  "8": 0.0
+};
+
+function WaitForHome(jobID)
+{
+  return Robot.loop(true, function()
+    {
+    let rt = []
+    rt.push(make_ins("g"))
+    rt.push(function ()
+            {   
+             let MeasAng = updateXYZPoint(jobID).slice(0,5)
+             let AngDelta = Vector.subtract(MeasAng, [0, 0, 0, 0, 0])
+             let MaxAngle = Vector.max(Vector.abs(AngDelta))
+
+             if(MaxAngle < .1){return Robot.break()}
+            })
+    return rt
+  })
+
+}
+
+function updateXYZPoint(jobID){
+    	var xyzPoint = [jobID.robot.robot_status[Dexter.J1_MEASURED_ANGLE], 
+						jobID.robot.robot_status[Dexter.J2_MEASURED_ANGLE], 
+                        jobID.robot.robot_status[Dexter.J3_MEASURED_ANGLE],
+                        jobID.robot.robot_status[Dexter.J4_MEASURED_ANGLE], 
+                        jobID.robot.robot_status[Dexter.J5_MEASURED_ANGLE],
+                        jobID.robot.robot_status[Dexter.J6_MEASURED_ANGLE], 
+                        jobID.robot.robot_status[Dexter.J7_MEASURED_ANGLE],
+                        
+                        -(OldStartTime - jobID.robot.robot_status[Dexter.START_TIME] 
+                        + ((OldEndTime - jobID.robot.robot_status[Dexter.STOP_TIME]) / 1000000)),
+                        jobID.robot.robot_status[Dexter.J7_MEASURED_ANGLE]
+                        ]
+/*
+START_TIME is actually the Unix time that the opcode was recieved by the robot. 
+STOP_TIME is not stop time, it is still the recieved time, but the nano second part of that. 
+This explains why it is being added after the / 1000000
+OldStartTime is the time at which the robot recieved that prior opcode
+OldEndTime is the nanosecond part of that.
+*/
+        //console.log(-(OldStartTime - Dexter.my_dex.robot_status[Dexter.START_TIME] + ((OldEndTime - Dexter.my_dex.robot_status[Dexter.STOP_TIME]) / 1000000)))
+        OldStartTime = jobID.robot.robot_status[Dexter.START_TIME]
+        OldEndTime = jobID.robot.robot_status[Dexter.STOP_TIME]
+
+return xyzPoint
+}
+
+new Job({name: "report_angles", robot: Robot.dexter0, keep_history: false, show_instructions: false, user_data: {J8Store: 0, LastUISelectRotate: 0, LastUISelectAngle: 0},
+         do_list: [
+                   make_ins("w", 36,2000 ^ 3000),
+                   Dexter.pid_move_all_joints([0, 0, 0, 0, 0, 0, NaN]),
+                   Robot.wait_until(5),
+                   //WaitForHome(this),
+                   make_ins("w", 36,2000 ^ 9000),
+                   init3servoGripper(),
+                   setServoTorque(1),
+                   Dexter.set_parameter("J1_PID_P", 0.15),
+                   Dexter.set_parameter("J2_PID_P", 0.15),
+                   Dexter.set_parameter("J3_PID_P", 0.15),
+                   Dexter.set_parameter("J4_PID_P", 0.15),
+                   Dexter.set_parameter("J5_PID_P", 0.15),
+                   function (){                         
+                       write_file("/srv/samba/share/joint_pos.txt", JSON.stringify(clearJointMailbox, null, 2))
+                       writeStatusFile("ready_to_receive_new_positions", robotTorque)
+                   },
+                   Robot.label("loopstart"),
+                   function (){
+                   const latest = JSON.parse(file_content("/srv/samba/share/joint_pos.txt"))
+                   if(latest.seq < 5 ){return Robot.go_to("loopstart")}
+                   
+                   writeStatusFile("position_ack", robotTorque)
+                   out("gripper Position : " + latest.angles["8"] + " grip val left" + gripVals.left + "  right  " + gripVals.right)
+                   let J1 =latest.angles["1"]
+                   let J2=latest.angles["2"]
+                   let J3=latest.angles["3"]
+                   let J4=latest.angles["4"]
+                   let J5=latest.angles["5"]
+                   let J6=-latest.angles["6"] * 17.26
+                   let gServo = latest.angles["8"]
+                   if(gServo > 1700 && gServo < 3000){
+                   gripVals=mapGrip(gServo)
+                       
+                   }
+                   
+                   if(latest.angles["8"] > 1695){
+                      return [Dexter.pid_move_all_joints([J1, J2, J3, J4, J5, J6, NaN]),
+                      SendServoPossition(gripVals.left , 1),
+                      SendServoPossition(gripVals.right, 4),
+
+                      Robot.go_to("loopstart")]}
+                      else
+                      {
+                          return function (){out("bye")}
+                      }
+                   },
+                   
+                   
+                  ]})
+
+function decimalToLittleEndianHex4BytesSigned(value) {
+    if (value < -0x80000000 || value > 0x7FFFFFFF) {
+        throw new Error('Value must be between -2,147,483,648 and 2,147,483,647 (32-bit signed integer)');
+    }
+    
+    // Create a 4-byte buffer
+    const buffer = new ArrayBuffer(4);
+    const view = new DataView(buffer);
+
+    // Write the value as a 32-bit signed integer in little-endian
+    view.setInt32(0, value, true);  // 'true' means little-endian
+
+    // Convert each byte to a two-character hex string
+    let hexString = '';
+    for (let i = 0; i < 4; i++) {
+        let byteHex = view.getUint8(i).toString(16).padStart(2, '0');
+        hexString += "%" + byteHex;
+    }
+
+    return hexString;
+}
+
+function FourByteRead(a_string)
+{   
+  if (typeof a_string === 'string') {
+  let StList = a_string.split(" ")
+//  let strNum = StList[9]+StList[10]+StList[11]+StList[11]+StList[12]
+//  return hexToSignedDecimal(strNum)
+  
+  let rs = Number(("0x"+StList[9])) + (Number(("0x"+StList[10])) * 256) + (Number(("0x"+StList[11])) * (256*256)) + (Number(("0x"+StList[12])) * (256*256*256))
+  let fixed4s = rs
+  //out(rs)
+    if (fixed4s > 0x7FFFFFFF) {
+    fixed4s = fixed4s - 0x100000000;
+  }
+
+  return fixed4s
+  
+  }
+  else {
+    return 1
+  }
+}
+
+function SendServoPossition(a_num, a_servo){
+      let number = a_num
+      
+      let buff = decimalToLittleEndianHex4BytesSigned(a_num)
+      return [make_ins("S", "ServoSetX", a_servo, 116, 12, buff)]
+}
+
+function init3servoGripper()
+{
+    return [
+
+        make_ins("S", "RebootServo", 1 ,430, 1296000, 0),
+        Robot.wait_until(.5),
+        make_ins("S", "RebootServo", 3 ,430, 1296000/4, 0),
+        Robot.wait_until(.5),
+        make_ins("S", "RebootServo", 4 ,430, 1296000, 0),
+        Robot.wait_until(.5),
+
+        make_ins("S", "ServoSet", 1, 11, 4),      // Extended position control
+        make_ins("S", "ServoSet", 3, 11, 4),      // Extended position control
+        make_ins("S", "ServoSet", 4, 11, 4),      // Extended position control
+
+        //make_ins("S", "ServoSet2X", 1, 100, 300), // Goal PWM 
+        //make_ins("S", "ServoSet2X", 3, 100, 300), // Goal PWM
+        //make_ins("S", "ServoSet2X", 4, 100, 300), // Goal PWM
+        make_ins("S", "ServoSet", 1, 65, 1),      // Turn ON LED
+        make_ins("S", "ServoSet", 3, 65, 1),      // Turn ON LED
+        make_ins("S", "ServoSet", 4, 65, 1),      // Turn ON LED
+        make_ins("S", "ServoSet", 1, 31, 70),   // Temperature Limit
+        make_ins("S", "ServoSet", 3, 31, 70),   // Temperature Limit
+        make_ins("S", "ServoSet", 4, 31, 70),   // Temperature Limit
+        make_ins("S", "ServoSet", 1, 63, 52),   // Shutdown --> Disable Bit 0 Input Voltage Error
+        make_ins("S", "ServoSet", 3, 63, 52),   // Shutdown --> Disable Bit 0 Input Voltage Error
+        make_ins("S", "ServoSet", 4, 63, 52),   // Shutdown --> Disable Bit 0 Input Voltage Error
+        make_ins("S", "ServoSet", 1, 64, 0),      // Torque Enable Off
+        make_ins("S", "ServoSet", 3, 64, 0),      // Torque Enable Off
+
+
+        make_ins("S", "ServoSet", 4, 64, 1),      // Torque Enable on
+        make_ins("S", "ServoSet", 4, 84, 50),      // minimum PID gain low torque
+        make_ins("S", "ServoSet", 1, 64, 1),      // Torque Enable on
+        make_ins("S", "ServoSet", 1, 84, 50),      // minimum PID gain low torque
+        SendServoPossition(1300, 4),
+        SendServoPossition(2700, 1),
+        //Control.wait_until(.5),
+        //make_ins("S", "ServoSet", 4, 11, 4),      // PWM mode
+        
+
+    ]
+
+}
+
+function setServoTorque(state)
+{
+    return [
+        make_ins("S", "ServoSet", 1, 64, state),  
+        make_ins("S", "ServoSet", 3, 64, state), 
+        make_ins("S", "ServoSet", 4, 64, state), 
+    ]
+
+}
+
+
+
+function mapGrip(cmd) {
+  // ----- input range -----
+  const minIn = 1700;
+  const maxIn = 2465;
+
+  // ----- clamp input -----
+  const v = Math.max(minIn, Math.min(maxIn, cmd));
+
+  // ----- normalize to 0…1 over 1700–2465 -----
+  const t = (v - minIn) / (maxIn - minIn);
+
+  // ----- output mapping -----
+  const rightOpen  = 55000;
+  const rightClose = 0;
+  const leftOpen   = 55000;
+  const leftClose  = 0;
+
+  // Linear interpolation
+  const rightRaw = Math.round(rightOpen + (rightClose - rightOpen) * t);
+  const leftRaw  = Math.round(leftOpen  + (leftClose  - leftOpen)  * t);
+
+  return { right: rightRaw, left: leftRaw };
+}
+/*
+function mapGrip(cmd) {
+
+  // ----- clamp input -----
+
+  const v = Math.max(1000, Math.min(2000, cmd));      // 1000…2000
+
+  const t = (v - 1000) / 1000;                        // 0 … 1
+
+
+
+  // ----- linear interpolation -----
+
+  // right: 2114 →  970  (decreasing)
+
+  const rightRaw = Math.round(2114 + (970 - 2114) * t);
+
+
+
+  // left : 1978 → 3112 (increasing)
+
+  const leftRaw  = Math.round(1978 + (3112 - 1978) * t);
+
+
+
+  return { right: rightRaw, left: leftRaw };
+
+}
+
+
+
+*/

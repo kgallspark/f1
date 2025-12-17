@@ -1,0 +1,19 @@
+# /etc/systemd/system/webrtc_stream.service
+[Unit]
+Description=Stereo WebRTC video + Dynamixel control
+After=network-online.target tailscaled.service dev-ttyACM0.device
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+# Wait for Tailscale to connect before starting
+ExecStartPre=/bin/bash -c 'for i in {1..30}; do /usr/bin/tailscale status &>/dev/null && exit 0 || sleep 1; done; echo "Tailscale not ready"; exit 1'
+
+# Use the venv's python interpreter directly (no need to 'source' activate)
+ExecStart=/home/kg/orbital-rtc/venv/bin/python3 -u /home/kg/orbital-rtc/vrserve.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+

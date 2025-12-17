@@ -1,0 +1,15 @@
+
+[Unit]
+Description=Forward Xiao joystick JSON over UART
+After=network-online.target tailscaled.service dev-serial0.device
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/tailscale wait 30
+ExecStart=/usr/bin/python3 /home/task-contorl/remote_control/joystick_sender_serial.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+

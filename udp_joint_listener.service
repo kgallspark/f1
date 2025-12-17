@@ -1,0 +1,15 @@
+[Unit]
+Description=UDP listener for joint-angle stream
+After=network-online.target tailscaled.service systemd-time-wait-sync.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+# Wait until Tailscale is connected
+ExecStartPre=/usr/local/bin/wait-for-tailscale.sh
+ExecStart=/usr/bin/python3 /srv/samba/share/udp_joint_reciever.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+

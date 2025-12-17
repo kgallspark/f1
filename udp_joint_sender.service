@@ -1,0 +1,16 @@
+ 
+[Unit]
+Description=Send joint-angle UDP stream to arm
+After=network-online.target tailscaled.service dev-ttyACM0.device
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/bin/wait-for-tailscale.sh
+ExecStart=/bin/bash -c 'source /home/task-control/dxl_venv/bin/activate && \
+                        python3 /home/task-control/remote_control/udp_joint_sender.py --dest 100.64.128.79'
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+
